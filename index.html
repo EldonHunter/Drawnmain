@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Hand Draw 2 Mains</title>
+<style>
+body{
+  margin:0;
+  background:white;
+  overflow:hidden;
+}
+canvas{
+  position:absolute;
+  top:0;
+  left:0;
+}
+video{
+  display:none;
+}
+</style>
+</head>
+<body>
+
+<video id="video" autoplay playsinline></video>
+<canvas id="canvas"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js"></script>
+
+<script>
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+/* Layer permanent pour le dessin */
+const drawLayer = document.createElement("canvas");
+drawLayer.width = canvas.width;
+drawLayer.height = canvas.height;
+const drawCtx = drawLayer.getContext("2d");
+
+let lastPoints = [null,null]; // pour 2 mains
+let colorIndex = 0;
+const colors = ["black","blue","green","red"];
+
+/* Initialisation MediaPipe */
+const hands = new Hands({
+  locateFile: (file) =>
+    `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`
+});
+
+hands.setOptions({
+  maxNumHands:2,
+  modelComplexity:1,
+  minDetectionConfidence:0.7,
+  minTrackingConfidence:0.7
+});
+
+hands.onResults(results => {
+
+  ctx.fillStyle = "white";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  ctx.drawImage(drawLayer,0,0);
+
+  const handStates = []; // ferme ou pas pour chaque main
+
+  if(results.multiHandLandmarks){
+
+    for(let i=0;i<results.multiHandLandmarks.length;i++){
+      const landmarks = results.multiHandLandmarks[i];
+
+      drawHand(landmarks);
+      detectPinch(landmarks,i);
+      const isClosed = detectFist(landmarks);
+      handStates[i] = isClosed;
+    }
+  }
+
+  /* Gestion couleur / effacement */
+  if(handStates.length > 0){
+
+    // si les deux mains sont fermées → efface
+    if(handStates[0] && handStates[1]){
+      drawCtx.clearRect(0,0,canvas.width,canvas.height);
+    } else {
+      // si au moins une seule main fermée → change couleur
+      for(let i=0;i<handStates.length;i++){
+        if(handStates[i] && !handStates[i].consumed){
+          colorIndex = (colorIndex+1) % colors.length;
+          handStates[i].consumed = true;
+        }
+      }
+    }
+  }
+
+});
+
+/* Dessiner la main en bleu ciel */
+function drawHand(landmarks){
+
+  ctx.strokeStyle="#5EC8F8";
+  ctx.lineWidth=4;
+  ctx.lineCap="round";
+
+  const connections = [
+    [0,1],[1,2],[2,3],[3,4],
+    [0,5],[5,6],[6,7],[7,8],
+    [5,9],[9,10],[10,11],[11,12],
+    [9,13],[13,14],[14,15],[15,16],
+    [13,17],[17,18],[18,19],[19,20],
+    [0,17]
+  ];
+
+  connections.forEach(([a,b])=>{
+    ctx.beginPath();
+    ctx.moveTo(
+      (1 - landmarks[a].x) * canvas.width,
+      landmarks[a].y * canvas.height
+    );
+    ctx.lineTo(
+      (1 - landmarks[b].x) * canvas.width,
+      landmarks[b].y * canvas.height
+    );
+    ctx.stroke();
+  });
+}
+
+/* Détection pincement pour dessiner */
+function detectPinch(landmarks,handIndex){
+
+  const thumb = landmarks[4];
+  const index = landmarks[8];
+
+  const x1 = (1 - thumb.x) * canvas.width;
+  const y1 = thumb.y * canvas.height;
+
+  const x2 = (1 - index.x) * canvas.width;
+  const y2 = index.y * canvas.height;
+
+  const distance = Math.hypot(x2 - x1, y2 - y1);
+
+  if(distance < 30){
+
+    const midX = (x1+x2)/2;
+    const midY = (y1+y2)/2;
+
+    if(!lastPoints[handIndex]) lastPoints[handIndex]={x:midX,y:midY};
+
+    drawCtx.strokeStyle = colors[colorIndex];
+    drawCtx.lineWidth = 6;
+    drawCtx.lineCap = "round";
+
+    drawCtx.beginPath();
+    drawCtx.moveTo(lastPoints[handIndex].x,lastPoints[handIndex].y);
+    drawCtx.lineTo(midX,midY);
+    drawCtx.stroke();
+
+    lastPoints[handIndex] = {x:midX,y:midY};
+
+  } else {
+    lastPoints[handIndex] = null;
+  }
+
+}
+
+/* Détection poing fermé */
+function detectFist(landmarks){
+
+  const tips=[8,12,16,20];
+  const bases=[6,10,14,18];
+
+  let closed=true;
+
+  for(let i=0;i<4;i++){
+    if(landmarks[tips[i]].y < landmarks[bases[i]].y){
+      closed=false;
+      break;
+    }
+  }
+
+  return closed;
+}
+
+/* Lancement caméra */
+const camera = new Camera(video,{
+  onFrame: async ()=>{
+    await hands.send({image:video});
+  },
+  width:640,
+  height:480
+});
+
+camera.start();
+
+</script>
+
+</body>
+  </html>
